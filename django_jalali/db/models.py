@@ -205,6 +205,7 @@ class jDateTimeField(models.DateTimeField):
     def parse_date(self, datetime_str):
         "Take a jalali str and convert it to jalali date"
         datetime_str = smart_str(datetime_str)
+        print('parse_date: ', datetime_str)
         if datetime_str is None:
             return None
 
@@ -240,16 +241,23 @@ class jDateTimeField(models.DateTimeField):
                 kwargs['seconds'] = 0
             date_args = list(map(int, date_str.split('-')))
             kwargs['year'], kwargs['month'], kwargs['day'] = date_args
+            print('parse_date', kwargs)
             return jdatetime.datetime(**kwargs)
         except ValueError:
             raise exceptions.ValidationError(self.error_messages['invalid'])
 
+    def parse_date_gregorian(self, datetime_str):
+        "Take a gregorian str and convert it to jalali date"
+        d = datetime.datetime.strptime(datetime_str, "%Y-%m-%d %H:%M:%S%z")
+        return jdatetime.datetime.fromgregorian(datetime=d)
+
     def from_db_value(self, value, expression, connection, context):
         if value is None:
             return value
-        return self.parse_date(value)
+        return self.parse_date_gregorian(value)
 
     def to_python(self, value):
+        print('to_python', value)
         if value is None:
             return value
 

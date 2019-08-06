@@ -1,11 +1,8 @@
 sudo: false
 language: python
 env:
-  - DJANGO=2.0 TEST_DIR=jalali_test_2_0
-  - DJANGO=2.0.2 TEST_DIR=jalali_test_2_0
-  - DJANGO=2.2.3 TEST_DIR=jalali_test_2_0
+  - DJANGO=2.2 TEST_DIR=jalali_test_2_0
 python:
-  - "3.4"
   - "3.7"
 install:
   - pip install -q Django==$DJANGO
@@ -13,9 +10,8 @@ install:
 before_script:
   - export PYTHONPATH=$PYTHONPATH:$(pwd)
 script:
-  - python setup.py sdist
-  - pip install dist/django-jalali*
   - cd $TEST_DIR
   - python manage.py test
   - cd ..
-
+  - python setup.py sdist
+  - pip install dist/django-jalali*
