@@ -184,7 +184,7 @@ class jDateTimeField(models.DateTimeField):
     default_error_messages = {
         'invalid': _(
             u'Enter a valid date/time in '
-            u'YYYY-MM-DD HH:MM[:ss[.uuuuuu]] format.'),
+            u'YYYY-MM-DD HH:MM[:ss[.uuuuuu]]+tz format.'),
     }
     description = _("Date (with time)")
 
@@ -202,89 +202,47 @@ class jDateTimeField(models.DateTimeField):
     def get_internal_type(self):
         return "DateTimeField"
 
-    def parse_date(self, datetime_obj):
-        "Take a datetime object and convert it to jalali date"
-
-        if isinstance(datetime_obj, datetime.datetime):
-            try:
-                if datetime_obj.year < 1700:
-                    return jdatetime.datetime(
-                        datetime_obj.year, datetime_obj.month,
-                        datetime_obj.day, datetime_obj.hour,
-                        datetime_obj.minute, datetime_obj.second,
-                        datetime_obj.microsecond, datetime_obj.tzinfo)
-                else:
-                    return jdatetime.datetime.fromgregorian(
-                        datetime=datetime_obj)
-            except ValueError:
-                raise exceptions.ValidationError(
-                    self.error_messages['invalid'])
-        if isinstance(datetime_obj, datetime.date):
-            try:
-                if datetime_obj.year < 1700:
-                    return jdatetime.datetime(datetime_obj.year,
-                                              datetime_obj.month,
-                                              datetime_obj.day)
-                else:
-                    return jdatetime.datetime.fromgregorian(date=datetime_obj)
-            except ValueError:
-                raise exceptions.ValidationError(
-                    self.error_messages['invalid'])
-
-        # Attempt to parse a datetime:
-        datetime_obj = smart_str(datetime_obj)
-        if not datetime_obj:
+    def parse_date(self, datetime_str):
+        "Take a jalali str and convert it to jalali date"
+        datetime_str = smart_str(datetime_str)
+        if datetime_str is None:
             return None
-        # split usecs, because they are not recognized by strptime.
-        if '.' in datetime_obj:
+
+        # get timezone if available
+        if '+' in datetime_str:
+            datetime_str, tz = datetime_str.split('+', maxsplit=1)
             try:
-                datetime_obj, usecs = datetime_obj.split('.')
-                if '+' in usecs:
-                    usecs, tz = usecs.split('+')
-                usecs = int(usecs)
+                tz = datetime.datetime.strptime('+'+tz, '%z').tzinfo
             except ValueError:
                 raise exceptions.ValidationError(
                     self.error_messages['invalid'])
         else:
-            usecs = 0
-        kwargs = {'microsecond': usecs}
-        try:  # Seconds are optional, so try converting seconds first.
-            t = time.strptime(datetime_obj, '%Y-%m-%d %H:%M:%S')
-            if t.tm_year > 1700:
-                return datetime.datetime(
-                    *time.strptime(datetime_obj, '%Y-%m-%d %H:%M:%S')[:6],
-                    **kwargs)
-            else:
-                return jdatetime.datetime(
-                    *time.strptime(datetime_obj, '%Y-%m-%d %H:%M:%S')[:6],
-                    **kwargs)
+            tz = None
+        kwargs = {'tzinfo': tz}
 
+        if '.' in datetime_str:  # split usecs
+            try:
+                datetime_str, usecs = datetime_str.split('.')
+                kwargs['microsecond'] = int(usecs)
+            except ValueError:
+                raise exceptions.ValidationError(
+                    self.error_messages['invalid'])
+        else:
+            kwargs['microsecond'] = 0
+
+        try:
+            date_str, time_str = datetime_str.split(' ')  # split date and time
+            time_args = list(map(int, time_str.split(':')))
+            if len(time_args) == 3:  # seconds are present
+                kwargs['hour'], kwargs['minute'], kwargs['seconds'] = time_args
+            elif len(time_args) == 2:  # seconds are not present
+                kwargs['hour'], kwargs['minute'] = time_args
+                kwargs['seconds'] = 0
+            date_args = list(map(int, date_str.split('-')))
+            kwargs['year'], kwargs['month'], kwargs['day'] = date_args
+            return jdatetime.datetime(**kwargs)
         except ValueError:
-            try:  # Try without seconds.
-                t = time.strptime(datetime_obj, '%Y-%m-%d %H:%M')
-                if t.tm_year > 1700:
-                    return datetime.datetime(
-                        *time.strptime(datetime_obj, '%Y-%m-%d %H:%M')[:5],
-                        **kwargs)
-                else:
-                    return jdatetime.datetime(
-                        *time.strptime(datetime_obj, '%Y-%m-%d %H:%M')[:5],
-                        **kwargs)
-
-            except ValueError:  # Try without hour/minutes/seconds.
-                try:
-                    t = time.strptime(datetime_obj, '%Y-%m-%d')[:3]
-                    if t[0] > 1700:
-                        return datetime.datetime(
-                            *time.strptime(datetime_obj, '%Y-%m-%d')[:3],
-                            **kwargs)
-                    else:
-                        return jdatetime.datetime(
-                            *time.strptime(datetime_obj, '%Y-%m-%d')[:3],
-                            **kwargs)
-                except ValueError:
-                    raise exceptions.ValidationError(
-                        self.error_messages['invalid'])
+            raise exceptions.ValidationError(self.error_messages['invalid'])
 
     def from_db_value(self, value, expression, connection, context):
         if value is None:
@@ -314,6 +272,7 @@ class jDateTimeField(models.DateTimeField):
             return super(jDateTimeField, self).pre_save(model_instance, add)
 
     def get_prep_value(self, value):
+        """converts naive to timezone aware"""
         value = self.to_python(value)
         if value is not None and settings.USE_TZ and timezone.is_naive(value):
             try:
@@ -321,15 +280,14 @@ class jDateTimeField(models.DateTimeField):
             except AttributeError:
                 name = '(unbound)'
             warnings.warn("DateTimeField %s received a naive datetime (%s)"
-                    " while time zone support is active." %
-                    (name, value),
-                    RuntimeWarning)
-            default_timezone = timezone.get_default_timezone()
-            value = timezone.make_aware(value, default_timezone)
+                          " while time zone support is active." %
+                          (name, value),
+                          RuntimeWarning)
+            value = timezone.make_aware(value, timezone.get_default_timezone())
         return value
 
     def get_db_prep_value(self, value, connection, prepared=False):
-        # Casts dates into the format expected by the backend
+        """Casts dates into the format expected by the backend"""
         if not prepared:
             value = self.get_prep_value(value)
 
@@ -344,10 +302,9 @@ class jDateTimeField(models.DateTimeField):
     def value_to_string(self, obj):
         value = self.value_from_object(obj)
         if value is None:
-            dat_string = ''
+            return ''
         else:
-            date_string = smart_text(value)
-        return date_string
+            return smart_text(value)
 
     def contribute_to_class(self, cls, name):
         super(jDateTimeField, self).contribute_to_class(cls, name)
